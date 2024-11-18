@@ -1,28 +1,22 @@
+import requests
 from flask import Flask, render_template, request, jsonify
-from transformers import T5Tokenizer, T5ForConditionalGeneration
-from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
 
-# Load the model and tokenizer
-model_name = "t5-small"
-tokenizer = T5Tokenizer.from_pretrained(model_name)
-model = T5ForConditionalGeneration.from_pretrained(model_name)
+# Hugging Face API URL and Authorization Header
+API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
+headers = {
+    "Authorization": "Bearer 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"  # Replace with your correct API key
+}
 
-# Define the summarization function
-def summarize_with_t5(text, language='en'):
-    if language != 'en':
-        # Translate text to English if it's not already in English
-        text = GoogleTranslator(source=language, target='en').translate(text)
-    inputs = tokenizer(text, return_tensors="pt", max_length=512, truncation=True)
-    outputs = model.generate(inputs.input_ids, max_length=150, min_length=40, length_penalty=2.0, num_beams=4, early_stopping=True)
-    summary = tokenizer.decode(outputs[0], skip_special_tokens=True)
+# Function to query Hugging Face API for summarization
+def query_huggingface(payload):
+    response = requests.post(API_URL, headers=headers, json=payload)
     
-    # Translate back if the language is not English
-    if language != 'en':
-        summary = GoogleTranslator(source='en', target=language).translate(summary)
+    if response.status_code != 200:
+        return {"error": f"API request failed with status code {response.status_code}"}
     
-    return summary
+    return response.json()
 
 # Define routes for the web app
 @app.route('/')
@@ -40,7 +34,7 @@ def summarize():
         user_input = request.form['user_input']
         selected_language = request.form.get('language', 'en')
         
-        # Map the language selection to language codes for translation
+        # Map the language selection to language codes for translation (if necessary)
         language_map = {
             'English': 'en',
             'Kannada': 'kn',
@@ -50,8 +44,19 @@ def summarize():
         }
         selected_language_code = language_map.get(selected_language, 'en')
         
-        # Perform summarization
-        summary = summarize_with_t5(user_input, language=selected_language_code)
+        # Send the user input to Hugging Face API for summarization
+        payload = {"inputs": user_input}
+        output = query_huggingface(payload)
+        
+        # If there's an error, return it
+        if "error" in output:
+            return jsonify({'error': output['error']}), 500
+        
+        # Get the summarized text from Hugging Face API response
+        summary = output[0].get('summary_text', '')
+        
+        if not summary:
+            return jsonify({'error': 'No summary found in the response'}), 500
         
         # Render the result template with the original text and summary
         return render_template(
